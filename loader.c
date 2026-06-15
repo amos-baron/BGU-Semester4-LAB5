@@ -1,11 +1,12 @@
 #include <elf.h>
 
+
 #define SYS_exit 1
 #define SYS_write 4
 #define SYS_open 5
 #define SYS_lseek 19
 #define SYS_mmap 90
-
+#define MAP_ANONYMOUS 0x20
 #define O_RDONLY 0
 #define SEEK_SET 0
 #define SEEK_END 2
@@ -110,6 +111,8 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
         return;
     }
 
+    print_phdr_info(phdr, 0);
+
     int prot = 0;
     if (phdr->p_flags & PF_R) prot |= PROT_READ;
     if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
@@ -121,7 +124,14 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
     unsigned int offset = phdr->p_offset & 0xfffff000;
     unsigned int padding = phdr->p_vaddr & 0xfff;
 
-    void *map_res = my_mmap((void *)vaddr, phdr->p_memsz + padding, prot, flags, fd, offset);
+    if (phdr->p_memsz > phdr->p_filesz) {
+        void *bss_res = my_mmap((void *)vaddr, phdr->p_memsz + padding, prot, flags | MAP_ANONYMOUS, -1, 0);
+        if (bss_res == MAP_FAILED) {
+            my_exit(1);
+        }
+    }
+
+    void *map_res = my_mmap((void *)vaddr, phdr->p_filesz + padding, prot, flags, fd, offset);
     if (map_res == MAP_FAILED) {
         my_exit(1);
     }
