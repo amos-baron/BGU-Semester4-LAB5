@@ -31,7 +31,7 @@ startup:
         ; [ebp+12] = argv
 
         mov edx, [ebp+12]	; Load argv (pointer to array of char*)
-        push    edx		; Push argv (second argument to main)
+        push edx		; Push argv (second argument to main)
         mov     ecx, [ebp+8]    ; Gets argc from C
         push    ecx             ; Push argc for _start
 

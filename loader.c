@@ -131,41 +131,42 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
     if (phdr->p_type != PT_LOAD) {
         return;
     }
-    void *bss_res = MAP_FAILED;
     void *map_res = MAP_FAILED;
+    void *bss_res = MAP_FAILED;
 
-    print_phdr_info(phdr, 0);
 
     int prot = 0;
-    if (phdr->p_flags & PF_R) 
-        prot |= PROT_READ;
-    if (phdr->p_flags & PF_W) 
-        prot |= PROT_WRITE;
-    if (phdr->p_flags & PF_X) 
-        prot |= PROT_EXEC;
+    if (phdr->p_flags & PF_R) prot |= PROT_READ;
+    if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
+    if (phdr->p_flags & PF_X) prot |= PROT_EXEC;
 
     int flags = MAP_PRIVATE | MAP_FIXED;
+
     unsigned int vaddr = phdr->p_vaddr & 0xfffff000;
     unsigned int offset = phdr->p_offset & 0xfffff000;
     unsigned int padding = phdr->p_vaddr & 0xfff;
     
-    unsigned int bss_len = phdr->p_memsz + padding;
-
-    if (phdr->p_memsz > phdr->p_filesz) {
-        bss_res = my_mmap((void *)vaddr, bss_len, prot, flags | MAP_ANONYMOUS, -1, 0);
-        if (bss_res == MAP_FAILED) {
-            goto lblCleanup;
-        }
-    }
-
-    map_res = my_mmap((void *)vaddr, phdr->p_filesz + padding, prot, flags, fd, offset);
-    
-lblCleanup:
-    if (map_res == MAP_FAILED && bss_res != MAP_FAILED) {
-        my_munmap(bss_res, bss_len);
-    }
+    unsigned int file_len = phdr->p_filesz + padding;
+    map_res = my_mmap((void *)vaddr, file_len, prot, flags, fd, offset);
     if (map_res == MAP_FAILED) {
         my_exit(1);
+    }
+
+    if (phdr->p_memsz > phdr->p_filesz) {
+        unsigned int bss_vaddr = (vaddr + file_len + 0xfff) & 0xfffff000;
+        
+        unsigned int total_len = phdr->p_memsz + padding;
+        unsigned int bss_end = (vaddr + total_len + 0xfff) & 0xfffff000;
+        
+        unsigned int bss_len = bss_end - bss_vaddr;
+
+        if (bss_len > 0) {
+            bss_res = my_mmap((void *)bss_vaddr, bss_len, prot, flags | MAP_ANONYMOUS, -1, 0);
+            if (bss_res == MAP_FAILED) {
+                my_munmap(map_res, file_len);
+                my_exit(1);
+            }
+        }
     }
 }
 
