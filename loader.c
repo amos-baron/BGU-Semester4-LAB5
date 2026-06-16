@@ -100,7 +100,7 @@ void print_phdr_info(Elf32_Phdr *phdr, int arg) {
     my_print_hex(phdr->p_filesz, 5); my_print(" 0x");
     my_print_hex(phdr->p_memsz, 5); my_print(" ");
     my_print(flg); my_print(" 0x");
-    my_print_hex(phdr->p_align, 1); my_print("\n");
+    my_print_hex(phdr->p_align, 4); my_print("\n");
 
     my_print("Prot Flags: 0x"); my_print_hex(prot, 1);
     my_print(" | Map Flags: 0x"); my_print_hex(map_flags, 2); my_print("\n");
