@@ -1,11 +1,12 @@
 #include <elf.h>
 
-
 #define SYS_exit 1
 #define SYS_write 4
 #define SYS_open 5
+#define SYS_close 6
 #define SYS_lseek 19
 #define SYS_mmap 90
+#define SYS_munmap 91
 #define MAP_ANONYMOUS 0x20
 #define O_RDONLY 0
 #define SEEK_SET 0
@@ -16,6 +17,9 @@
 #define MAP_PRIVATE 0x02
 #define MAP_FIXED 0x10
 #define MAP_FAILED ((void *)-1)
+
+#define RETVAL_SUCCESS 0
+#define RETVAL_FAILED 1
 
 extern int system_call(int syscall_num, ...);
 extern int startup(int argc, char **argv, void (*start)());
@@ -44,6 +48,10 @@ int my_open(const char *pathname, int flags) {
     return system_call(SYS_open, pathname, flags, 0);
 }
 
+int my_close(int fd) {
+    return system_call(SYS_close, fd, 0, 0);
+}
+
 int my_lseek(int fd, int offset, int whence) {
     return system_call(SYS_lseek, fd, offset, whence);
 }
@@ -57,6 +65,10 @@ void *my_mmap(void *addr, int length, int prot, int flags, int fd, int offset) {
     mmap_args[4] = (unsigned int)fd;
     mmap_args[5] = (unsigned int)offset;
     return (void *)system_call(SYS_mmap, mmap_args);
+}
+
+int my_munmap(void *addr, int length) {
+    return system_call(SYS_munmap, addr, length, 0);
 }
 
 void my_exit(int status) {
@@ -87,9 +99,18 @@ void print_phdr_info(Elf32_Phdr *phdr, int arg) {
 
     int prot = 0;
     char flg[4] = "   ";
-    if (phdr->p_flags & PF_R) { prot |= PROT_READ; flg[0] = 'R'; }
-    if (phdr->p_flags & PF_W) { prot |= PROT_WRITE; flg[1] = 'W'; }
-    if (phdr->p_flags & PF_X) { prot |= PROT_EXEC; flg[2] = 'E'; }
+    if (phdr->p_flags & PF_R) { 
+        prot |= PROT_READ; 
+        flg[0] = 'R'; 
+    }
+    if (phdr->p_flags & PF_W) {
+        prot |= PROT_WRITE; 
+        flg[1] = 'W'; 
+    }
+    if (phdr->p_flags & PF_X) { 
+        prot |= PROT_EXEC; 
+        flg[2] = 'E'; 
+    }
 
     int map_flags = MAP_PRIVATE | MAP_FIXED;
 
@@ -110,41 +131,55 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
     if (phdr->p_type != PT_LOAD) {
         return;
     }
+    void *bss_res = MAP_FAILED;
+    void *map_res = MAP_FAILED;
 
     print_phdr_info(phdr, 0);
 
     int prot = 0;
-    if (phdr->p_flags & PF_R) prot |= PROT_READ;
-    if (phdr->p_flags & PF_W) prot |= PROT_WRITE;
-    if (phdr->p_flags & PF_X) prot |= PROT_EXEC;
+    if (phdr->p_flags & PF_R) 
+        prot |= PROT_READ;
+    if (phdr->p_flags & PF_W) 
+        prot |= PROT_WRITE;
+    if (phdr->p_flags & PF_X) 
+        prot |= PROT_EXEC;
 
     int flags = MAP_PRIVATE | MAP_FIXED;
-
     unsigned int vaddr = phdr->p_vaddr & 0xfffff000;
     unsigned int offset = phdr->p_offset & 0xfffff000;
     unsigned int padding = phdr->p_vaddr & 0xfff;
+    
+    unsigned int bss_len = phdr->p_memsz + padding;
 
     if (phdr->p_memsz > phdr->p_filesz) {
-        void *bss_res = my_mmap((void *)vaddr, phdr->p_memsz + padding, prot, flags | MAP_ANONYMOUS, -1, 0);
+        bss_res = my_mmap((void *)vaddr, bss_len, prot, flags | MAP_ANONYMOUS, -1, 0);
         if (bss_res == MAP_FAILED) {
-            my_exit(1);
+            goto lblCleanup;
         }
     }
 
-    void *map_res = my_mmap((void *)vaddr, phdr->p_filesz + padding, prot, flags, fd, offset);
+    map_res = my_mmap((void *)vaddr, phdr->p_filesz + padding, prot, flags, fd, offset);
+    
+lblCleanup:
+    if (map_res == MAP_FAILED && bss_res != MAP_FAILED) {
+        my_munmap(bss_res, bss_len);
+    }
     if (map_res == MAP_FAILED) {
         my_exit(1);
     }
 }
 
 int main(int argc, char **argv) {
+    int ret_val = RETVAL_SUCCESS;
     if (argc < 2) {
-        my_exit(1);
+        ret_val = RETVAL_FAILED;
+        goto lblCleanup;
     }
 
     int fd = my_open(argv[1], O_RDONLY);
     if (fd < 0) {
-        my_exit(1);
+        ret_val = RETVAL_FAILED;
+        goto lblCleanup;
     }
 
     int file_size = my_lseek(fd, 0, SEEK_END);
@@ -152,14 +187,16 @@ int main(int argc, char **argv) {
 
     void *map_start = my_mmap(0, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (map_start == MAP_FAILED) {
-        my_exit(1);
+        ret_val = RETVAL_FAILED;
+        goto lblCleanup;
     }
 
     Elf32_Ehdr *ehdr = (Elf32_Ehdr *)map_start;
 
     if (ehdr->e_ident[EI_MAG0] != ELFMAG0 || ehdr->e_ident[EI_MAG1] != ELFMAG1 || 
         ehdr->e_ident[EI_MAG2] != ELFMAG2 || ehdr->e_ident[EI_MAG3] != ELFMAG3) {
-        my_exit(1);
+        ret_val = RETVAL_FAILED;
+        goto lblCleanup;
     }
 
     my_print("Type    Offset   VirtAddr   PhysAddr   FileSiz MemSiz Flg Align\n");
@@ -170,5 +207,13 @@ int main(int argc, char **argv) {
     void (*start_routine)() = (void (*)())(ehdr->e_entry);
     startup(argc - 1, argv + 1, start_routine);
 
-    return 0;
+lblCleanup:
+    my_close(fd);
+    if (ret_val == RETVAL_FAILED) {
+        my_strlen(ret_val);
+    }
+    if (ret_val == RETVAL_FAILED && map_start != MAP_FAILED) {
+        my_munmap(map_start, file_size);
+    }
+    return ret_val;
 }
